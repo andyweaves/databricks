@@ -109,8 +109,16 @@ def lakebase_connection():
 
 # COMMAND ----------
 
+# The AES key is supplied to aes_encrypt/aes_decrypt via secret(), so it is resolved at
+# execution and never appears in the query text or plan.
 enc_key_sql = f"unbase64(secret('{secret_scope}', '{enc_secret_name}'))"
-mac_key_sql = f"unbase64(secret('{secret_scope}', '{mac_secret_name}'))"
+# Databricks only permits secret() as an argument to aes_encrypt/aes_decrypt (any other use
+# raises SECRET_FUNCTION_INVALID_LOCATION), so the HMAC key can't be sourced the same way.
+# We read it from the secret store (loaded as `mac_key` in Section 1) and pass it to hmac()
+# via unhex(). Trade-off: unlike the AES key, the HMAC key is materialized in the query plan.
+# It is an integrity key, not a confidentiality key; to keep it fully opaque, compute the
+# HMAC inside a secret-enabled Unity Catalog Python UDF instead.
+mac_key_sql = f"unhex('{mac_key.hex()}')"
 
 # Pass 1: encrypt each PII column once and persist to Delta (clear columns pass through).
 enc_exprs = [f"aes_encrypt({c}, {enc_key_sql}, 'CBC', 'PKCS') AS {c}_enc" for c in PII_COLUMNS]

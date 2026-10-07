@@ -214,8 +214,12 @@ FROM {catalog}.{schema}.lakebase_customers_encrypted ORDER BY customer_id LIMIT 
 
 # COMMAND ----------
 
-mac_key_sql = f"unbase64(secret('{secret_scope}', '{mac_secret_name}'))"
+# The AES key goes to aes_decrypt via secret() (resolved at execution, never in the plan).
+# Databricks only permits secret() as an argument to aes_encrypt/aes_decrypt, so the HMAC key
+# is read from the secret store (loaded as `mac_key` in Section 1) and passed to hmac() via
+# unhex(). The HMAC (integrity) key is therefore materialized in the query plan; see 02's note.
 enc_key_sql = f"unbase64(secret('{secret_scope}', '{enc_secret_name}'))"
+mac_key_sql = f"unhex('{mac_key.hex()}')"
 
 dec_exprs = []
 for c in PII_COLUMNS:

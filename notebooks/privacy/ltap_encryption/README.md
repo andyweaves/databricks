@@ -79,6 +79,24 @@ synced table — no base64 round-tripping needed.
   Postgres**. The ciphertext lives in Lakebase; the key does not.
 - Each row carries a `key_version`. New writes use the newest key; old rows stay readable
   under their original key during a background re-encrypt.
+- On the Databricks side the **AES key** is supplied to `aes_encrypt`/`aes_decrypt` via the SQL
+  `secret()` function, so it is resolved at execution and never appears in the query text or
+  plan. The **HMAC key** can't use the same trick: Databricks only permits `secret()` as an
+  argument to `aes_encrypt`/`aes_decrypt` (anything else raises `SECRET_FUNCTION_INVALID_LOCATION`),
+  so the HMAC key is read from the secret store and passed to `hmac()` directly, which means it
+  *is* materialized in the query plan. It's an integrity key rather than a confidentiality key;
+  if even that exposure is unacceptable, compute the HMAC inside a secret-enabled Unity Catalog
+  Python UDF instead.
+
+> **Why workspace secret scopes and not Unity Catalog secrets?** Unity Catalog secrets (GA
+> since August 2026) are the more governed option, but the SQL built-in `secret()` function —
+> which the Databricks-side encryption uses *inline* (`aes_encrypt(col, unbase64(secret(...)))`)
+> so the key is resolved at execution and never lands in the query text or plan — only supports
+> **workspace secret scopes**, not UC three-part names. Keeping that property is worth more here
+> than UC governance. Move to UC secrets once `secret()` supports them, or wrap the crypto in a
+> Unity Catalog Python UDF with a `SECRETS` clause (reading via
+> `dbutils.secrets.get(catalog=…, schema=…, key=…)`, which needs DBR 17.3 LTS+ / serverless env
+> v4+).
 
 **Does rotating the key require re-encrypting the data?** With direct encryption like this —
 **yes**: the ciphertext is bound to the key, so rotation means decrypt-with-old →
