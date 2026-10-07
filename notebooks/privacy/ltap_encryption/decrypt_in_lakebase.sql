@@ -12,17 +12,16 @@
 --   * The synced table public.customers_encrypted exists and is ONLINE.
 --
 -- Keys
---   Paste the 64-character hex of your two derived subkeys below. Retrieve them
---   from your Databricks secret scope (in a notebook / Databricks cell):
---
---       from base64 import b64decode
---       print("enc:", b64decode(dbutils.secrets.get("ltap_encryption", "enc_key_v1")).hex())
---       print("mac:", b64decode(dbutils.secrets.get("ltap_encryption", "mac_key_v1")).hex())
+--   Paste the 64-character hex of your two derived subkeys below (the AES/encryption
+--   key and the HMAC key). Retrieve them through your own key-management process.
+--   Do NOT print secret values in a notebook to obtain them: transforming a secret
+--   (e.g. base64-decoding and hex-ing it) bypasses Databricks' secret redaction and
+--   leaks the key into the notebook output and revision history.
 --
 -- ⚠️  Security note: pasting the keys here puts them in Lakebase query history / logs
---   (the AES key especially). Fine for a one-off manual check; for anything
---   repeatable, decrypt from the notebook, where secret() keeps the AES key out of
---   the query plan.
+--   (the AES key especially). Use this only for a one-off manual check. For anything
+--   repeatable, decrypt from the notebook, where secret() keeps the AES key out of the
+--   query plan.
 --
 -- This query matches the context-bound HMAC used by the notebooks: the tag is
 -- computed over  utf-8("<customer_id>:<column>:<key_version>") || blob,  so a
