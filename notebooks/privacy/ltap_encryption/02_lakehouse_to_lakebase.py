@@ -75,6 +75,25 @@ PII_COLUMNS = ["name", "email", "phone_number", "national_id", "credit_card_numb
 CLEAR_COLUMNS = ["customer_id", "locale", "age", "company"]
 
 
+# Associated data for the HMAC. We bind each MAC to the row, column and key version so a
+# ciphertext only verifies where it was minted. Without this, anyone with table-write access
+# could cut-and-paste a (ciphertext, mac) pair into another row or column and have it verify,
+# even without knowing any key. Both engines build the byte-identical message
+#   utf-8("<customer_id>:<column>:<key_version>") || blob
+# and HMAC over that, so the tag produced on one side verifies on the other.
+def dbx_mac_message(col, alias=""):
+    """Context-bound HMAC message as a Databricks SQL BINARY expression."""
+    p = f"{alias}." if alias else ""
+    ctx = f"concat_ws(':', cast({p}customer_id AS STRING), '{col}', cast({p}key_version AS STRING))"
+    return f"concat(encode({ctx}, 'utf-8'), {p}{col}_enc)"
+
+
+def pg_mac_message(col):
+    """Context-bound HMAC message as a Postgres bytea expression (byte-identical to dbx)."""
+    ctx = f"customer_id::text || ':' || '{col}' || ':' || key_version::text"
+    return f"(convert_to({ctx}, 'utf8') || {col}_enc)"
+
+
 def lakebase_connection():
     endpoint = w.postgres.get_endpoint(name=endpoint_name)
     return psycopg.connect(
@@ -130,10 +149,11 @@ SELECT
 FROM {catalog}.{schema}.customers
 """)
 
-# Pass 2: compute the Encrypt-then-MAC tag over each now-materialized ciphertext column.
+# Pass 2: compute the Encrypt-then-MAC tag over each now-materialized ciphertext column,
+# binding it to (customer_id, column, key_version) via dbx_mac_message().
 for c in PII_COLUMNS:
     spark.sql(f"ALTER TABLE {catalog}.{schema}.customers_encrypted ADD COLUMN {c}_mac BINARY")
-set_clause = ",\n  ".join([f"{c}_mac = hmac({mac_key_sql}, {c}_enc, 'SHA-256')" for c in PII_COLUMNS])
+set_clause = ",\n  ".join([f"{c}_mac = hmac({mac_key_sql}, {dbx_mac_message(c)}, 'SHA-256')" for c in PII_COLUMNS])
 spark.sql(f"""
 UPDATE {catalog}.{schema}.customers_encrypted
 SET
@@ -163,7 +183,7 @@ LIMIT 20
 check_exprs = []
 for c in PII_COLUMNS:
     check_exprs.append(
-        f"""CASE WHEN hmac({mac_key_sql}, e.{c}_enc, 'SHA-256') = e.{c}_mac
+        f"""CASE WHEN hmac({mac_key_sql}, {dbx_mac_message(c, 'e')}, 'SHA-256') = e.{c}_mac
                   AND CAST(aes_decrypt(e.{c}_enc, {enc_key_sql}, 'CBC', 'PKCS') AS STRING) = c.{c}
                  THEN 0 ELSE 1 END AS {c}_bad""")
 mismatch = spark.sql(f"""
@@ -248,7 +268,8 @@ else:
 # MAGIC
 # MAGIC The payoff. In Postgres we:
 # MAGIC
-# MAGIC 1. recompute `hmac(email_enc, mac_key, 'sha256')` and compare it to the stored `email_mac`
+# MAGIC 1. rebuild the context-bound message (`utf-8("<id>:<column>:<key_version>") || blob`) and
+# MAGIC    recompute `hmac(message, mac_key, 'sha256')`, comparing it to the stored `*_mac`
 # MAGIC    — note pgcrypto's `hmac(data, key, ...)` argument order is the **reverse** of
 # MAGIC    Databricks' `hmac(key, message, ...)`;
 # MAGIC 2. only if the MAC verifies, slice the IV back off (`substring(blob from 1 for 16)`) and
@@ -259,11 +280,12 @@ else:
 
 # COMMAND ----------
 
-# Build the per-column verify+decrypt projection for every PII column.
+# Build the per-column verify+decrypt projection for every PII column. The HMAC is checked over
+# the same context-bound message built in Databricks, so a spliced ciphertext fails to verify.
 col_exprs = []
 for c in PII_COLUMNS:
     col_exprs.append(f"""
-      CASE WHEN hmac({c}_enc, %(mac)s, 'sha256') = {c}_mac
+      CASE WHEN hmac({pg_mac_message(c)}, %(mac)s, 'sha256') = {c}_mac
            THEN convert_from(
                   decrypt_iv(
                     substring({c}_enc from 17),             -- ciphertext after the 16-byte IV

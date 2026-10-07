@@ -40,7 +40,7 @@ A recommended, validated approach for column-level encryption that round-trips b
 - `02_lakehouse_to_lakebase.py` — encrypt in Spark, sync to Lakebase, decrypt in Postgres.
 - `03_lakebase_to_lakehouse.py` — encrypt in Postgres, read back into Spark, decrypt in Databricks.
 
-See the folder's `README.md` for the GCM-vs-CBC rationale, security caveats, key rotation, and the wire format. (Addresses epic FEIP-5589.)
+See the folder's `README.md` for the GCM-vs-CBC rationale, security caveats, key rotation, and the wire format.
 
 ## Prerequisites
 

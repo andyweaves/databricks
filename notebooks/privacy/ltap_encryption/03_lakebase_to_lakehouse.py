@@ -70,6 +70,18 @@ PII_COLUMNS = ["name", "email", "phone_number", "national_id", "credit_card_numb
 CLEAR_COLUMNS = ["locale", "age", "company"]
 
 
+# Context-bound HMAC message (see 02 for the rationale). Both engines build the byte-identical
+# message utf-8("<customer_id>:<column>:<key_version>") || blob, so the tag minted in Postgres
+# verifies in Databricks and a spliced ciphertext does not. Postgres builds the message inline
+# in Section 3 (it needs the subquery alias and the key-version parameter); Databricks uses this
+# helper to verify in Section 5.
+def dbx_mac_message(col, alias=""):
+    """Context-bound HMAC message as a Databricks SQL BINARY expression."""
+    p = f"{alias}." if alias else ""
+    ctx = f"concat_ws(':', cast({p}customer_id AS STRING), '{col}', cast({p}key_version AS STRING))"
+    return f"concat(encode({ctx}, 'utf-8'), {p}{col}_enc)"
+
+
 def lakebase_connection():
     endpoint = w.postgres.get_endpoint(name=endpoint_name)
     return psycopg.connect(
@@ -127,7 +139,8 @@ with lakebase_connection() as conn:
 # MAGIC - generate a random 16-byte IV per row with `gen_random_bytes(16)`;
 # MAGIC - `encrypt_iv(convert_to(col,'utf8'), enc_key, iv, 'aes-cbc/pad:pkcs')` for the ciphertext,
 # MAGIC   with the IV prepended;
-# MAGIC - `hmac(blob, mac_key, 'sha256')` for the Encrypt-then-MAC tag;
+# MAGIC - a context-bound Encrypt-then-MAC tag over `utf-8("<id>:<column>:<key_version>") || blob`,
+# MAGIC   so the tag only verifies for this row/column/key version;
 # MAGIC - record `key_version`.
 # MAGIC
 # MAGIC Each PII column gets its own `CROSS JOIN LATERAL gen_random_bytes(16)` so every column of
@@ -141,7 +154,11 @@ for c in PII_COLUMNS:
     blob_exprs.append(
         f"iv_{c}.iv || encrypt_iv(convert_to(s2.{c}, 'utf8'), %(enc)s, iv_{c}.iv, 'aes-cbc/pad:pkcs') AS {c}_blob")
     set_exprs.append(f"{c}_enc = e.{c}_blob")
-    set_exprs.append(f"{c}_mac = hmac(e.{c}_blob, %(mac)s, 'sha256')")
+    # Context-bound HMAC: utf-8("<id>:<column>:<key_version>") || blob. key_version is the
+    # %(kv)s parameter (the column isn't set until this same statement completes).
+    mac_msg = (f"convert_to(e.customer_id::text || ':' || '{c}' || ':' || %(kv)s::text, 'utf8') "
+               f"|| e.{c}_blob")
+    set_exprs.append(f"{c}_mac = hmac({mac_msg}, %(mac)s, 'sha256')")
 
 laterals = "\n           ".join(
     f"CROSS JOIN LATERAL (SELECT gen_random_bytes(16) AS iv) AS iv_{c}" for c in PII_COLUMNS)
@@ -224,7 +241,7 @@ mac_key_sql = f"unhex('{mac_key.hex()}')"
 dec_exprs = []
 for c in PII_COLUMNS:
     dec_exprs.append(
-        f"""CASE WHEN hmac({mac_key_sql}, {c}_enc, 'SHA-256') = {c}_mac
+        f"""CASE WHEN hmac({mac_key_sql}, {dbx_mac_message(c)}, 'SHA-256') = {c}_mac
                  THEN CAST(aes_decrypt({c}_enc, {enc_key_sql}, 'CBC', 'PKCS') AS STRING)
             END AS {c}""")
 decrypted = spark.sql(f"""

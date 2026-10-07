@@ -7,7 +7,7 @@ This directory contains Databricks notebooks organized by topic. Each subdirecto
 | Directory | Description |
 |---|---|
 | **fake_pii_data** | Generate realistic fake PII test data for use with the other notebooks. |
-| **privacy** | Scan tables for PII, tag columns with classification labels, and apply format-preserving encryption. |
+| **privacy** | Scan tables for PII, tag columns with classification labels, apply format-preserving encryption, and encrypt columns interchangeably across the Lakehouse and Lakebase (`ltap_encryption`). |
 | **abac** | Attribute-Based Access Control -- create Unity Catalog column mask policies driven by PII tags so sensitive data is automatically redacted for unauthorized users. |
 | **envelope_encryption** | Envelope encryption using Azure Key Vault for encrypting and decrypting data at the field level. |
 | **envelope_encryption_v2** | Updated envelope encryption implementation with support for both AWS and Azure key management. |

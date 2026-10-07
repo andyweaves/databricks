@@ -6,8 +6,8 @@ encrypt a column on one side and decrypt it on the other without copying the pla
 out. This is the "LTAP" (Lake Transactional/Analytical Processing) pattern: OLAP in the
 Lakehouse and OLTP in Lakebase over the *same* data.
 
-> Addresses epic **FEIP-5589** — *"Define and document a recommended approach for column
-> level encryption/decryption that works for both Lakehouse and Lakebase."*
+> **Goal:** define and document a recommended approach for column-level
+> encryption/decryption that works interchangeably across both the Lakehouse and Lakebase.
 
 ## TL;DR — the recommendation
 
@@ -118,6 +118,12 @@ here can be wrapped exactly the same way.
 | `02_lakehouse_to_lakebase.py` | Encrypt the PII columns in Delta (`aes_encrypt` CBC + `hmac`), sync them to Lakebase via a **synced table**, then verify the HMAC and `decrypt_iv` **in Postgres** for every row/column — proving Lakehouse → Lakebase |
 | `03_lakebase_to_lakehouse.py` | Encrypt the PII columns in Postgres (`encrypt_iv` + `hmac`) in a regular table, read them back into Spark, then verify the HMAC and `aes_decrypt` **in Databricks** — proving Lakebase → Lakehouse |
 
+There's also a standalone SQL script:
+
+| File | What it does |
+|---|---|
+| `decrypt_in_lakebase.sql` | Paste-and-run in the **Lakebase SQL editor** to verify + decrypt the synced PII columns directly in Postgres, without a notebook. You supply the key hex; it mirrors the notebooks' context-bound HMAC check. |
+
 The demo encrypts five PII columns — `name`, `email`, `phone_number`, `national_id`,
 `credit_card_number` — and leaves `locale`, `age`, `company` in the clear to show selective,
 column-level protection. The PII column list is defined once in each notebook (`PII_COLUMNS`),
@@ -148,7 +154,7 @@ tables are read-only in Postgres, so writes must use a regular table).
   AEAD. It is made safe with Encrypt-then-MAC, but AEAD remains preferable where available.
 - **Synced tables are read-only in Postgres** — the Lakebase→Lakehouse direction uses a
   regular table.
-- **The ideal future state** (called out in FEIP-5589): Databricks `aes_encrypt`/`aes_decrypt`
+- **The ideal future state**: Databricks `aes_encrypt`/`aes_decrypt`
   interoperating natively with Lakebase — e.g. a GCM-capable AEAD on the Postgres side, or a
   shared authenticated-encryption format across both engines — which would remove the need
   for the CBC+HMAC construction entirely.
