@@ -148,6 +148,12 @@ tables are read-only in Postgres, so writes must use a regular table).
   AEAD. It is made safe with Encrypt-then-MAC, but AEAD remains preferable where available.
 - **Synced tables are read-only in Postgres** — the Lakebase→Lakehouse direction uses a
   regular table.
+- **No secure in-editor decrypt in Lakebase today.** pgcrypto can decrypt in the Lakebase SQL
+  editor, but there's no way to reference a managed secret from within Lakebase (no server-side
+  `secret()` equivalent), so the key would have to be pasted as a literal — exposing it in
+  Lakebase's query history. Keep encryption/decryption in the notebooks (or an application),
+  where the key stays out of the query. A callable `secret()` within Lakebase would close this
+  gap.
 - **The ideal future state**: Databricks `aes_encrypt`/`aes_decrypt`
   interoperating natively with Lakebase — e.g. a GCM-capable AEAD on the Postgres side, or a
   shared authenticated-encryption format across both engines — which would remove the need
