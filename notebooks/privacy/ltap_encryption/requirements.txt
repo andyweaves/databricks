@@ -1,0 +1,4 @@
+# Postgres driver for connecting to Lakebase from the notebooks.
+# psycopg 3 is recommended; the [binary] extra ships prebuilt wheels (no local libpq needed).
+psycopg[binary]>=3.1
+</content>

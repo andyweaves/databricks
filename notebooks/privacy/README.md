@@ -32,6 +32,16 @@ Demonstrates format-preserving encryption (FPE) using the FF3-1 algorithm, which
 - `format_preserving_encryption.py` — Generates fake PII data, then encrypts selected columns (name, email, SSN, IP addresses, etc.). Supports multiple character sets (numeric, alpha, alphanumeric, ASCII). Handles special characters via two modes: `TOKENIZE` (encrypt everything) or `REASSEMBLE` (preserve special character positions). Decrypts the data back to verify round-trip correctness.
 - `format_preserving_encryption_tests.py` — Tests for the FPE implementation.
 
+### ltap_encryption/
+
+A recommended, validated approach for column-level encryption that round-trips between the **Databricks Lakehouse (Delta/Spark SQL) and Lakebase (managed Postgres)** — encrypt on one side, decrypt on the other, without copying the plaintext out. Uses AES-256-CBC + PKCS#7 (the only AES mode both engines support) wrapped with HMAC-SHA256 Encrypt-then-MAC for integrity, with `pgcrypto` on the Postgres side.
+
+- `01_setup.py` — connect to Lakebase, enable `pgcrypto`, generate a master key + derived enc/MAC subkeys in Databricks Secrets, create sample data.
+- `02_lakehouse_to_lakebase.py` — encrypt in Spark, sync to Lakebase, decrypt in Postgres.
+- `03_lakebase_to_lakehouse.py` — encrypt in Postgres, read back into Spark, decrypt in Databricks.
+
+See the folder's `README.md` for the GCM-vs-CBC rationale, security caveats, key rotation, and the wire format. (Addresses epic FEIP-5589.)
+
 ## Prerequisites
 
 - **Pip packages**: Installed automatically via `%pip install -q -r ../../requirements.txt` at the top of each Python notebook. Key packages include `presidio_analyzer`, `presidio_anonymizer`, `faker`, `mimesis`, and `ff3` (for FPE).
