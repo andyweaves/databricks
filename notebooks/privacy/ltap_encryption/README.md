@@ -118,12 +118,6 @@ here can be wrapped exactly the same way.
 | `02_lakehouse_to_lakebase.py` | Encrypt the PII columns in Delta (`aes_encrypt` CBC + `hmac`), sync them to Lakebase via a **synced table**, then verify the HMAC and `decrypt_iv` **in Postgres** for every row/column — proving Lakehouse → Lakebase |
 | `03_lakebase_to_lakehouse.py` | Encrypt the PII columns in Postgres (`encrypt_iv` + `hmac`) in a regular table, read them back into Spark, then verify the HMAC and `aes_decrypt` **in Databricks** — proving Lakebase → Lakehouse |
 
-There's also a standalone SQL script:
-
-| File | What it does |
-|---|---|
-| `decrypt_in_lakebase.sql` | Paste-and-run in the **Lakebase SQL editor** to verify + decrypt the synced PII columns directly in Postgres, without a notebook. You supply the key hex; it mirrors the notebooks' context-bound HMAC check. |
-
 The demo encrypts five PII columns — `name`, `email`, `phone_number`, `national_id`,
 `credit_card_number` — and leaves `locale`, `age`, `company` in the clear to show selective,
 column-level protection. The PII column list is defined once in each notebook (`PII_COLUMNS`),
