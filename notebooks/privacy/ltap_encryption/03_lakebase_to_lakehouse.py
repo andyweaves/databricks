@@ -280,4 +280,3 @@ for c in PII_COLUMNS:
 assert total_bad == 0, "Lakebase → Lakehouse decryption did not match the original plaintext"
 print(f"\n✅ Lakebase → Lakehouse round-trip verified for {len(dec_pd):,} rows across "
       f"{len(PII_COLUMNS)} PII columns: encrypted in Postgres, decrypted in Spark.")
-</content>

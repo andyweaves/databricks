@@ -27,6 +27,11 @@ dbutils.library.restartPython()
 # MAGIC from Databricks Secrets. The subkeys are used as **bound `psycopg` parameters** on the
 # MAGIC Postgres side — never inlined into SQL text (so they don't land in Postgres statement
 # MAGIC logs) and never persisted in Lakebase.
+# MAGIC
+# MAGIC > The Lakebase **project / branch / database are read from the `lakebase_catalog`** via
+# MAGIC > `w.postgres.get_catalog` rather than taken as separate widgets, so the synced table's
+# MAGIC > branch always matches the catalog's project (the two can't drift apart). You only supply
+# MAGIC > the catalog name and the endpoint (compute) id.
 
 # COMMAND ----------
 
@@ -40,10 +45,7 @@ dbutils.widgets.text("catalog", "main", "Catalog")
 dbutils.widgets.text("schema", "ltap_encryption", "Schema")
 dbutils.widgets.text("secret_scope", "ltap_encryption", "Secret scope for key material")
 dbutils.widgets.text("key_version", "1", "Key version")
-dbutils.widgets.text("lakebase_project", "", "Lakebase project id")
-dbutils.widgets.text("lakebase_branch", "production", "Lakebase branch id")
-dbutils.widgets.text("lakebase_endpoint", "", "Lakebase endpoint id (compute)")
-dbutils.widgets.text("lakebase_database", "databricks_postgres", "Lakebase Postgres database")
+dbutils.widgets.text("lakebase_endpoint", "primary", "Lakebase endpoint id (compute)")
 dbutils.widgets.text("lakebase_catalog", "", "Lakebase UC catalog (for synced table)")
 dbutils.widgets.text("pg_schema", "public", "Postgres schema for the synced table")
 
@@ -51,14 +53,22 @@ catalog = dbutils.widgets.get("catalog")
 schema = dbutils.widgets.get("schema")
 secret_scope = dbutils.widgets.get("secret_scope")
 key_version = int(dbutils.widgets.get("key_version"))
-project = dbutils.widgets.get("lakebase_project")
-branch = dbutils.widgets.get("lakebase_branch")
 endpoint_id = dbutils.widgets.get("lakebase_endpoint")
-pg_database = dbutils.widgets.get("lakebase_database")
 lakebase_catalog = dbutils.widgets.get("lakebase_catalog")
 pg_schema = dbutils.widgets.get("pg_schema")
 
-endpoint_name = f"projects/{project}/branches/{branch}/endpoints/{endpoint_id}"
+# Derive the Lakebase project / branch / database from the UC catalog itself, rather than
+# taking them as separate widgets. This makes the synced table's branch structurally
+# impossible to point at a different project than the catalog — the mismatch that fails with
+# "Provided database project ID ... does not match catalog's project ID ...".
+cat_status = w.postgres.get_catalog(f"catalogs/{lakebase_catalog}").status
+branch_path = cat_status.branch                      # "projects/<project>/branches/<branch>"
+pg_database = cat_status.postgres_database
+project = branch_path.split("/")[1]
+branch = branch_path.split("/")[3]
+endpoint_name = f"{branch_path}/endpoints/{endpoint_id}"
+print(f"Lakebase (from catalog '{lakebase_catalog}'): {branch_path}, db={pg_database}")
+
 enc_secret_name = f"enc_key_v{key_version}"
 mac_secret_name = f"mac_key_v{key_version}"
 
@@ -205,9 +215,14 @@ print("✅ In-Lakehouse decrypt check passed for all PII columns.")
 # MAGIC ## Section 3: Sync the encrypted table into Lakebase
 # MAGIC
 # MAGIC A **Lakebase synced table** copies the Delta table into Postgres (Snapshot mode here — no
-# MAGIC CDF needed). Create it once with the CLI command printed below (run it from a terminal
-# MAGIC with your profile), or via the Catalog Explorer UI. `BINARY` columns arrive as `BYTEA`,
-# MAGIC ready for `pgcrypto`.
+# MAGIC CDF needed). The cell below creates it directly with the Databricks SDK
+# MAGIC (`w.postgres.create_synced_table`); you can also create it from the Catalog Explorer UI.
+# MAGIC `BINARY` columns arrive as `BYTEA`, ready for `pgcrypto`.
+# MAGIC
+# MAGIC > The `branch` is derived from `lakebase_catalog` in Section 1, so it always matches the
+# MAGIC > catalog's project — the create can't fail with *"Provided database project ID … does not
+# MAGIC > match catalog's project ID …"*. `storage_catalog` / `storage_schema` is where the sync
+# MAGIC > pipeline writes its event log — it must be a **regular UC catalog**, not the Lakebase one.
 # MAGIC
 # MAGIC > Synced tables are **read-only** in Postgres — perfect for this direction, where we only
 # MAGIC > decrypt (a SELECT). The reverse direction (writing ciphertext in Lakebase) uses a regular
@@ -215,51 +230,58 @@ print("✅ In-Lakehouse decrypt check passed for all PII columns.")
 
 # COMMAND ----------
 
-synced_table = f"{lakebase_catalog}.{pg_schema}.customers_encrypted"
+from databricks.sdk.service.postgres import (
+    SyncedTable,
+    SyncedTableSyncedTableSpec,
+    SyncedTableSyncedTableSpecSyncedTableSchedulingPolicy,
+    NewPipelineSpec,
+)
+
+synced_table_id = f"{lakebase_catalog}.{pg_schema}.customers_encrypted"
 source_table = f"{catalog}.{schema}.customers_encrypted"
-cli_command = f"""databricks postgres create-synced-table {synced_table} \\
-  --json '{{
-    "spec": {{
-      "source_table_full_name": "{source_table}",
-      "primary_key_columns": ["customer_id"],
-      "scheduling_policy": "SNAPSHOT",
-      "branch": "projects/{project}/branches/{branch}",
-      "postgres_database": "{pg_database}",
-      "create_database_objects_if_missing": true,
-      "new_pipeline_spec": {{
-        "storage_catalog": "{catalog}",
-        "storage_schema": "{schema}"
-      }}
-    }}
-  }}' --profile <PROFILE>"""
-print(cli_command)
+
+# `branch` (project path) was derived from `lakebase_catalog` in Section 1, so it belongs to
+# the same project the catalog is registered against — this is what prevents the server error
+# "Provided database project ID ... does not match catalog's project ID ...".
+op = w.postgres.create_synced_table(
+    synced_table=SyncedTable(spec=SyncedTableSyncedTableSpec(
+        source_table_full_name=source_table,
+        branch=f"projects/{project}/branches/{branch}",
+        primary_key_columns=["customer_id"],
+        scheduling_policy=SyncedTableSyncedTableSpecSyncedTableSchedulingPolicy.SNAPSHOT,
+        postgres_database=pg_database,
+        create_database_objects_if_missing=True,
+        # The sync pipeline writes its event log here — this must be a regular UC catalog,
+        # NOT the Lakebase catalog (DLT can't write to a Postgres-backed schema).
+        new_pipeline_spec=NewPipelineSpec(
+            storage_catalog=catalog,
+            storage_schema=schema,
+        ),
+    )),
+    synced_table_id=synced_table_id,
+)
+result = op.wait()
+print(f"✅ Synced table created: {result.name}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Wait until the synced table has materialized in Postgres before continuing. This cell
-# MAGIC polls for the table and its row count.
+# MAGIC `op.wait()` above already blocked until the Snapshot sync finished, so the table is
+# MAGIC online — no manual polling needed. We just confirm its state via the SDK and read the
+# MAGIC Postgres row count for reassurance.
 
 # COMMAND ----------
 
-import time
-
 pg_table = f"{pg_schema}.customers_encrypted"
-for attempt in range(60):
-    try:
-        with lakebase_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT count(*) FROM {pg_table}")
-                count = cur.fetchone()[0]
-        if count > 0:
-            print(f"Synced table {pg_table} is ready with {count} rows.")
-            break
-        print(f"[{attempt}] table present but empty; waiting…")
-    except Exception as e:
-        print(f"[{attempt}] not ready yet: {e}")
-    time.sleep(10)
-else:
-    raise TimeoutError(f"Synced table {pg_table} did not become ready in time.")
+
+st = w.postgres.get_synced_table(f"synced_tables/{synced_table_id}")
+print(f"Synced table state: {st.status.detailed_state}")
+
+with lakebase_connection() as conn:
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT count(*) FROM {pg_table}")
+        count = cur.fetchone()[0]
+print(f"{pg_table} is ready with {count:,} rows.")
 
 # COMMAND ----------
 
@@ -325,4 +347,3 @@ display(pg_df.head(5))
 assert total_bad == 0, "Lakehouse → Lakebase decryption did not match the original plaintext"
 print(f"\n✅ Lakehouse → Lakebase round-trip verified for {len(pg_df):,} rows across "
       f"{len(PII_COLUMNS)} PII columns: encrypted in Spark, decrypted in Postgres.")
-</content>

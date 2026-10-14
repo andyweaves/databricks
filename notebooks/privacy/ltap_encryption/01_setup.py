@@ -47,11 +47,14 @@ dbutils.widgets.text("secret_scope", "ltap_encryption", "Secret scope for key ma
 dbutils.widgets.text("key_version", "1", "Key version")
 dbutils.widgets.text("num_rows", "10000", "Number of fake PII rows to generate")
 
-# Lakebase connection coordinates — fill these in from `databricks postgres list-*` output.
+# Lakebase coordinates. The project and its UC catalog are created by the bootstrap cell in
+# Section 2 if they don't exist, so these can be brand-new names on a fresh workspace.
 dbutils.widgets.text("lakebase_project", "", "Lakebase project id")
 dbutils.widgets.text("lakebase_branch", "production", "Lakebase branch id")
-dbutils.widgets.text("lakebase_endpoint", "", "Lakebase endpoint id (compute)")
+dbutils.widgets.text("lakebase_endpoint", "primary", "Lakebase endpoint id (compute)")
 dbutils.widgets.text("lakebase_database", "databricks_postgres", "Lakebase Postgres database")
+dbutils.widgets.text("lakebase_catalog", "", "Lakebase UC catalog to register for the project")
+dbutils.widgets.text("lakebase_display_name", "LTAP Encryption Demo", "Lakebase project display name")
 
 catalog = dbutils.widgets.get("catalog")
 schema = dbutils.widgets.get("schema")
@@ -63,6 +66,8 @@ project = dbutils.widgets.get("lakebase_project")
 branch = dbutils.widgets.get("lakebase_branch")
 endpoint_id = dbutils.widgets.get("lakebase_endpoint")
 pg_database = dbutils.widgets.get("lakebase_database")
+lakebase_catalog = dbutils.widgets.get("lakebase_catalog")
+lakebase_display_name = dbutils.widgets.get("lakebase_display_name")
 
 endpoint_name = f"projects/{project}/branches/{branch}/endpoints/{endpoint_id}"
 print(f"UC target     : {catalog}.{schema}")
@@ -78,9 +83,54 @@ spark.sql(f"USE SCHEMA `{schema}`")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Section 2: Connect to Lakebase
+# MAGIC ## Section 2: Provision and connect to Lakebase
 # MAGIC
-# MAGIC We connect with `psycopg` using a short-lived OAuth database credential generated from the
+# MAGIC First, **idempotently create the Lakebase project and register its UC catalog** with the
+# MAGIC SDK (`w.postgres.create_project` / `create_catalog`) — so the whole demo runs from this
+# MAGIC notebook with no CLI prerequisite. Both steps are skipped if the resources already exist.
+# MAGIC Creating a project auto-provisions its `production` branch and a `primary` endpoint.
+# MAGIC
+# MAGIC > `lakebase_catalog` is the catalog that `02_lakehouse_to_lakebase.py` reads back to derive
+# MAGIC > the project/branch for its synced table, so register it here under the same project.
+
+# COMMAND ----------
+
+from databricks.sdk.errors import NotFound
+from databricks.sdk.service.postgres import Project, ProjectSpec, Catalog, CatalogCatalogSpec
+
+# Project — create if missing (auto-provisions the production branch + primary endpoint).
+try:
+    w.postgres.get_project(f"projects/{project}")
+    print(f"Lakebase project already exists: {project}")
+except NotFound:
+    print(f"Creating Lakebase project '{project}' …")
+    w.postgres.create_project(
+        Project(spec=ProjectSpec(display_name=lakebase_display_name)),
+        project_id=project,
+    ).wait()
+    print(f"  created (branch '{branch}' + endpoint '{endpoint_id}' auto-provisioned)")
+
+# UC catalog registration — create if missing, bound to this project's branch.
+if lakebase_catalog:
+    try:
+        w.postgres.get_catalog(f"catalogs/{lakebase_catalog}")
+        print(f"Lakebase UC catalog already registered: {lakebase_catalog}")
+    except NotFound:
+        print(f"Registering UC catalog '{lakebase_catalog}' -> project '{project}' …")
+        w.postgres.create_catalog(
+            Catalog(spec=CatalogCatalogSpec(
+                postgres_database=pg_database,
+                branch=f"projects/{project}/branches/{branch}",
+                create_database_if_missing=True,
+            )),
+            catalog_id=lakebase_catalog,
+        ).wait()
+        print("  registered")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Now connect with `psycopg` using a short-lived OAuth database credential generated from the
 # MAGIC endpoint. Tokens last ~1 hour; for long-running work refresh them (see the Lakebase
 # MAGIC connectivity guidance). A small helper returns a fresh connection on demand so later cells
 # MAGIC never operate on a stale token.
@@ -297,4 +347,3 @@ display(spark.table(f"{catalog}.{schema}.customers").limit(20))
 # MAGIC
 # MAGIC Keep the same widget values when you run `02_lakehouse_to_lakebase.py` and
 # MAGIC `03_lakebase_to_lakehouse.py`.
-</content>

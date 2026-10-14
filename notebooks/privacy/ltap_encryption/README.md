@@ -114,8 +114,8 @@ here can be wrapped exactly the same way.
 
 | Notebook | What it does |
 |---|---|
-| `01_setup.py` | Config, connect to Lakebase, `CREATE EXTENSION pgcrypto`, generate the master key + derived subkeys into Databricks Secrets, and generate a table of realistic fake PII in Delta (`faker` + `mimesis`, 10,000 rows by default) |
-| `02_lakehouse_to_lakebase.py` | Encrypt the PII columns in Delta (`aes_encrypt` CBC + `hmac`), sync them to Lakebase via a **synced table**, then verify the HMAC and `decrypt_iv` **in Postgres** for every row/column — proving Lakehouse → Lakebase |
+| `01_setup.py` | Config, **provision the Lakebase project + register its UC catalog (idempotent, via the SDK)**, connect to Lakebase, `CREATE EXTENSION pgcrypto`, generate the master key + derived subkeys into Databricks Secrets, and generate a table of realistic fake PII in Delta (`faker` + `mimesis`, 10,000 rows by default) |
+| `02_lakehouse_to_lakebase.py` | Encrypt the PII columns in Delta (`aes_encrypt` CBC + `hmac`), create a Lakebase **synced table** in-notebook (`w.postgres.create_synced_table`), then verify the HMAC and `decrypt_iv` **in Postgres** for every row/column — proving Lakehouse → Lakebase |
 | `03_lakebase_to_lakehouse.py` | Encrypt the PII columns in Postgres (`encrypt_iv` + `hmac`) in a regular table, read them back into Spark, then verify the HMAC and `aes_decrypt` **in Databricks** — proving Lakebase → Lakehouse |
 
 The demo encrypts five PII columns — `name`, `email`, `phone_number`, `national_id`,
@@ -130,7 +130,11 @@ tables are read-only in Postgres, so writes must use a regular table).
 ## Prerequisites
 
 - Databricks CLI authenticated to a workspace with Lakebase enabled (see the `databricks-core`
-  skill). Create the Lakebase project and register it as a UC catalog once up front:
+  skill).
+- **The Lakebase project and its UC catalog are created for you** by `01_setup.py` (idempotent,
+  via `w.postgres.create_project` / `create_catalog`) — just set the `lakebase_project` and
+  `lakebase_catalog` widgets. If you'd rather pre-create them from a terminal, the equivalent
+  CLI is:
   ```bash
   databricks postgres create-project <PROJECT_ID> \
     --json '{"spec": {"display_name": "LTAP Encryption Demo"}}' --profile <PROFILE>
