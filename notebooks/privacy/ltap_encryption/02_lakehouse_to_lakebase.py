@@ -295,12 +295,19 @@ for attempt in range(1, max_attempts + 1):
             with conn.cursor() as cur:
                 cur.execute(f"SELECT count(*) FROM {pg_table}")
                 count = cur.fetchone()[0]
-        break
+        if count > 0:
+            break
+        reason = "table exists but has 0 rows"
     except psycopg.errors.UndefinedTable:
-        if attempt == max_attempts:
-            raise
-        print(f"  table not yet visible (attempt {attempt}/{max_attempts}), retrying in {delay_secs}s …")
-        time.sleep(delay_secs)
+        count = 0
+        reason = "table not yet visible"
+    if attempt == max_attempts:
+        raise RuntimeError(
+            f"{pg_table} still has {count} rows after {max_attempts} attempts — "
+            "sync may not have completed; check the synced-table pipeline status."
+        )
+    print(f"  {reason} (attempt {attempt}/{max_attempts}), retrying in {delay_secs}s …")
+    time.sleep(delay_secs)
 
 print(f"{pg_table} is ready with {count:,} rows.")
 
