@@ -46,18 +46,18 @@ from databricks.sdk import WorkspaceClient
 w = WorkspaceClient()
 
 dbutils.widgets.text("catalog", "main", "Catalog")
-dbutils.widgets.text("schema", "ltap_encryption", "Schema")
-dbutils.widgets.text("secret_scope", "ltap_encryption", "Secret scope for key material")
+dbutils.widgets.text("schema", "ltap_encryption_demo", "Schema")
+dbutils.widgets.text("secret_scope", "ltap_encryption_demo", "Secret scope for key material")
 dbutils.widgets.text("key_version", "1", "Key version")
 dbutils.widgets.text("num_rows", "10000", "Number of fake PII rows to generate")
 
 # Lakebase coordinates. The project and its UC catalog are created by the bootstrap cell in
 # Section 2 if they don't exist, so these can be brand-new names on a fresh workspace.
-dbutils.widgets.text("lakebase_project", "ltap-encryption", "Lakebase project id")
+dbutils.widgets.text("lakebase_project", "ltap-encryption-demo", "Lakebase project id")
 dbutils.widgets.text("lakebase_branch", "production", "Lakebase branch id")
 dbutils.widgets.text("lakebase_endpoint", "primary", "Lakebase endpoint id (compute)")
 dbutils.widgets.text("lakebase_database", "databricks_postgres", "Lakebase Postgres database")
-dbutils.widgets.text("lakebase_catalog", "ltap_encryption", "Lakebase UC catalog to register for the project")
+dbutils.widgets.text("lakebase_catalog", "ltap_encryption_demo", "Lakebase UC catalog to register for the project")
 dbutils.widgets.text("lakebase_display_name", "LTAP Encryption Demo", "Lakebase project display name")
 
 catalog = dbutils.widgets.get("catalog")

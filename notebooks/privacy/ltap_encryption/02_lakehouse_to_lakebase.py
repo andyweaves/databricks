@@ -49,11 +49,11 @@ from databricks.sdk import WorkspaceClient
 w = WorkspaceClient()
 
 dbutils.widgets.text("catalog", "main", "Catalog")
-dbutils.widgets.text("schema", "ltap_encryption", "Schema")
-dbutils.widgets.text("secret_scope", "ltap_encryption", "Secret scope for key material")
+dbutils.widgets.text("schema", "ltap_encryption_demo", "Schema")
+dbutils.widgets.text("secret_scope", "ltap_encryption_demo", "Secret scope for key material")
 dbutils.widgets.text("key_version", "1", "Key version")
 dbutils.widgets.text("lakebase_endpoint", "primary", "Lakebase endpoint id (compute)")
-dbutils.widgets.text("lakebase_catalog", "ltap_encryption", "Lakebase UC catalog (for synced table)")
+dbutils.widgets.text("lakebase_catalog", "ltap_encryption_demo", "Lakebase UC catalog (for synced table)")
 dbutils.widgets.text("pg_schema", "public", "Postgres schema for the synced table")
 
 catalog = dbutils.widgets.get("catalog")
