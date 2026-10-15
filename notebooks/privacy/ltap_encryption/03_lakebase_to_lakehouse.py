@@ -1,4 +1,11 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# dependencies = [
+#   "\"psycopg[binary]>=3.1\"",
+# ]
+# ///
 # MAGIC %md
 # MAGIC # LTAP Encryption — 03: Lakebase → Lakehouse
 # MAGIC
@@ -38,9 +45,9 @@ dbutils.widgets.text("catalog", "main", "Catalog")
 dbutils.widgets.text("schema", "ltap_encryption", "Schema")
 dbutils.widgets.text("secret_scope", "ltap_encryption", "Secret scope for key material")
 dbutils.widgets.text("key_version", "1", "Key version")
-dbutils.widgets.text("lakebase_project", "", "Lakebase project id")
+dbutils.widgets.text("lakebase_project", "ltap-encryption", "Lakebase project id")
 dbutils.widgets.text("lakebase_branch", "production", "Lakebase branch id")
-dbutils.widgets.text("lakebase_endpoint", "", "Lakebase endpoint id (compute)")
+dbutils.widgets.text("lakebase_endpoint", "primary", "Lakebase endpoint id (compute)")
 dbutils.widgets.text("lakebase_database", "databricks_postgres", "Lakebase Postgres database")
 dbutils.widgets.text("pg_schema", "public", "Postgres schema")
 

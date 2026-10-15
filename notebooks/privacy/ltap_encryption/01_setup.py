@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # LTAP Encryption — 01: Setup
 # MAGIC
@@ -49,11 +53,11 @@ dbutils.widgets.text("num_rows", "10000", "Number of fake PII rows to generate")
 
 # Lakebase coordinates. The project and its UC catalog are created by the bootstrap cell in
 # Section 2 if they don't exist, so these can be brand-new names on a fresh workspace.
-dbutils.widgets.text("lakebase_project", "", "Lakebase project id")
+dbutils.widgets.text("lakebase_project", "ltap-encryption", "Lakebase project id")
 dbutils.widgets.text("lakebase_branch", "production", "Lakebase branch id")
 dbutils.widgets.text("lakebase_endpoint", "primary", "Lakebase endpoint id (compute)")
 dbutils.widgets.text("lakebase_database", "databricks_postgres", "Lakebase Postgres database")
-dbutils.widgets.text("lakebase_catalog", "", "Lakebase UC catalog to register for the project")
+dbutils.widgets.text("lakebase_catalog", "ltap_encryption", "Lakebase UC catalog to register for the project")
 dbutils.widgets.text("lakebase_display_name", "LTAP Encryption Demo", "Lakebase project display name")
 
 catalog = dbutils.widgets.get("catalog")
@@ -99,9 +103,18 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.postgres import Project, ProjectSpec, Catalog, CatalogCatalogSpec
 
 # Project — create if missing (auto-provisions the production branch + primary endpoint).
+# If the project exists but its branch is missing, it's a zombie from a failed provision;
+# delete and recreate it so auto-provisioning runs cleanly.
 try:
     w.postgres.get_project(f"projects/{project}")
-    print(f"Lakebase project already exists: {project}")
+    # Verify the branch was auto-provisioned; if not, the project is broken.
+    try:
+        w.postgres.get_branch(f"projects/{project}/branches/{branch}")
+        print(f"Lakebase project already exists: {project}")
+    except NotFound:
+        print(f"Project '{project}' exists but branch '{branch}' is missing — deleting zombie project …")
+        w.postgres.delete_project(f"projects/{project}", purge=True).wait()
+        raise NotFound(f"Zombie project deleted; recreating")  # fall into create block
 except NotFound:
     print(f"Creating Lakebase project '{project}' …")
     w.postgres.create_project(

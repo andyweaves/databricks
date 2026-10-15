@@ -1,4 +1,11 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# dependencies = [
+#   "\"psycopg[binary]>=3.1\"",
+# ]
+# ///
 # MAGIC %md
 # MAGIC # LTAP Encryption — 02: Lakehouse → Lakebase
 # MAGIC
@@ -46,7 +53,7 @@ dbutils.widgets.text("schema", "ltap_encryption", "Schema")
 dbutils.widgets.text("secret_scope", "ltap_encryption", "Secret scope for key material")
 dbutils.widgets.text("key_version", "1", "Key version")
 dbutils.widgets.text("lakebase_endpoint", "primary", "Lakebase endpoint id (compute)")
-dbutils.widgets.text("lakebase_catalog", "", "Lakebase UC catalog (for synced table)")
+dbutils.widgets.text("lakebase_catalog", "ltap_encryption", "Lakebase UC catalog (for synced table)")
 dbutils.widgets.text("pg_schema", "public", "Postgres schema for the synced table")
 
 catalog = dbutils.widgets.get("catalog")
@@ -272,15 +279,29 @@ print(f"✅ Synced table created: {result.name}")
 
 # COMMAND ----------
 
+import time
+
 pg_table = f"{pg_schema}.customers_encrypted"
 
 st = w.postgres.get_synced_table(f"synced_tables/{synced_table_id}")
 print(f"Synced table state: {st.status.detailed_state}")
 
-with lakebase_connection() as conn:
-    with conn.cursor() as cur:
-        cur.execute(f"SELECT count(*) FROM {pg_table}")
-        count = cur.fetchone()[0]
+# The control plane marks the sync complete before the Postgres data-plane endpoint can
+# always serve queries against the new table.  Retry a few times to absorb that delay.
+max_attempts, delay_secs = 6, 5
+for attempt in range(1, max_attempts + 1):
+    try:
+        with lakebase_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT count(*) FROM {pg_table}")
+                count = cur.fetchone()[0]
+        break
+    except psycopg.errors.UndefinedTable:
+        if attempt == max_attempts:
+            raise
+        print(f"  table not yet visible (attempt {attempt}/{max_attempts}), retrying in {delay_secs}s …")
+        time.sleep(delay_secs)
+
 print(f"{pg_table} is ready with {count:,} rows.")
 
 # COMMAND ----------
