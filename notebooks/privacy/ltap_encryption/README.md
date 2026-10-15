@@ -49,6 +49,38 @@ cryptographer would check are all satisfied: random per-row IVs, Encrypt-then-MA
 MAC verified *before* decryption, **separate keys for encryption and authentication**, and
 256-bit keys sourced from a secret store (never hardcoded, never persisted in Postgres).
 
+## When to use this vs. just AES-GCM
+
+Aligning both engines on CBC+HMAC isn't free — you take on a second (MAC) key to derive and
+manage, a wire format you assemble by hand, and all the care that unauthenticated CBC
+demands. So it's only worth paying when you actually use the interop. The deciding question
+is:
+
+> **Does anything need to read plaintext on the Lakebase (Postgres) side without a round-trip
+> back to the Lakehouse?**
+
+- **Yes — an OLTP app, service, or Databricks App decrypts in Postgres** (e.g. to serve a
+  field at single-digit-ms latency). This is exactly what the aligned format buys you, and
+  it's the whole point of the pattern: routing every decrypt back through Spark would throw
+  away the low-latency serving Lakebase exists to provide. Keep CBC+HMAC. The notebooks show
+  it working today — `02` decrypts every row **inside Postgres** with the key supplied as a
+  bound `psycopg` parameter (never inlined, so it stays out of the query text and
+  `pg_stat_statements`). The one thing that genuinely doesn't work is the **interactive
+  Lakebase SQL editor**: with no code to bind a parameter you'd have to paste the key as a
+  literal (see [Limitations](#limitations--the-product-ask)) — a UX gap, not a blocker for
+  app/programmatic access.
+
+- **No — Lakebase only stores and serves opaque ciphertext, and all decryption happens in the
+  Lakehouse** (analytics, batch). Then the alignment buys you nothing, and **plain AES-GCM is
+  the better choice**: it's authenticated (AEAD) in a single function, needs no separate HMAC
+  key, avoids CBC's padding-oracle / malleability footguns, is the `aes_encrypt` default, and
+  keeps the key out of Postgres entirely — if Postgres never decrypts it never needs the key,
+  so you don't even need `pgcrypto` on that side. Use `aes_encrypt(col, key)` with the GCM
+  default and decrypt only in Databricks via `secret()`.
+
+In short: the CBC+HMAC construction here is the right tool **only** when you genuinely decrypt
+on the Lakebase side. If you don't, reach for GCM.
+
 ## Wire format
 
 A single canonical layout is used in both directions so the same bytes decrypt on either
